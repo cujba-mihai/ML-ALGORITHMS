@@ -62,5 +62,10 @@ class Apriori(Resource):
 
 api.add_resource(Apriori, '/apriori')
 
+
+@app.route("/")
+def home_view():
+        return "<h1>Hello World!</h1>"
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0')
