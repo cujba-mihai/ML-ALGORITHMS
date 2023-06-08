@@ -1,67 +1,49 @@
 from flask import Flask, request, jsonify
 from flask_restful import Resource, Api
-from mlxtend.preprocessing import TransactionEncoder
-from mlxtend.frequent_patterns import apriori, association_rules
-import pandas as pd
+from flask_cors import CORS
+from sklearn.cluster import KMeans
+from decision_tree import DecisionTreeEndpoint
+from apriori import Apriori
+import numpy as np
+import matplotlib.pyplot as plt
+import io
+import base64
+from io import BytesIO
+
 
 app = Flask(__name__)
+CORS(app)
 api = Api(app)
 
-class Apriori(Resource):
-    def post(self):
-        data = request.get_json()  # get data from post request
-        transactions = data['transactions']
-        min_support = data.get('min_support', 0.01)  # must be > 0
-        min_confidence = data.get('min_confidence', 0)
-        min_lift = data.get('min_lift', 0)
-        min_length = data.get('min_length', 1)  # minimum length of itemsets
-
-        # Encoding the transactions
-        te = TransactionEncoder()
-        te_ary = te.fit_transform(transactions)
-        df = pd.DataFrame(te_ary, columns=te.columns_).astype(bool)
-
-        # Applying apriori to generate all frequent itemsets that meet the minimum support threshold
-        frequent_itemsets_df = apriori(df, min_support=min_support, use_colnames=True, verbose=1)
-
-        # Convert frozenset objects to lists for JSON serialization
-        frequent_itemsets_df['itemsets'] = frequent_itemsets_df['itemsets'].apply(list)
-
-        # Generate association rules
-        rules = association_rules(frequent_itemsets_df, metric="confidence", min_threshold=min_confidence)
-
-        # Filtering the rules by the lift and min_length
-        rules = rules[(rules['lift'] >= min_lift) & (rules['antecedents'].apply(lambda x: len(x)) >= min_length)]
-
-        # build steps dictionary
-        steps = {}
-        total_transactions = len(transactions)
-
-        for index, row in frequent_itemsets_df.iterrows():
-            itemset = list(row['itemsets'])
-            support = row['support']
-
-            step_number = len(itemset)
-            step_key = f"step{step_number}"
-
-            if step_key not in steps:
-                steps[step_key] = f"Step {step_number}: Calculate support for {step_number}-tuple items\n"
-
-            steps[step_key] += f'Support for {itemset}: {support*total_transactions} (occurrences) / {total_transactions} (total transactions) = {support}\n'
-
-        # Convert frozenset objects to lists for JSON serialization
-        rules['antecedents'] = rules['antecedents'].apply(list)
-        rules['consequents'] = rules['consequents'].apply(list)
-
-        result = {
-            'steps': steps,
-#             'frequent_itemsets': frequent_itemsets_df.to_dict('records'),
-            'association_rules': rules.to_dict('records'),
-        }
-        return jsonify(result)
-
 api.add_resource(Apriori, '/apriori')
+api.add_resource(DecisionTreeEndpoint, '/decision_tree')
 
+
+def generate_kmeans_plot(data_points, labels):
+    plt.scatter(data_points[:,0], data_points[:,1], c=labels)
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    return base64.b64encode(buf.read()).decode('ascii')
+
+@app.route('/kmeans', methods=['POST'])
+def perform_kmeans():
+    data = request.get_json()
+    data_points = np.array(data['data_points'])
+    n_clusters = int(data['n_clusters'])
+    kmeans = KMeans(n_clusters=n_clusters, init='random', n_init=1, max_iter=1, random_state=42)
+    iterations = []
+
+    for i in range(10):
+        kmeans.fit(data_points)
+        labels = kmeans.labels_
+        centroids = kmeans.cluster_centers_
+        plot_image = generate_kmeans_plot(data_points, labels)
+        iteration = {'iteration': i+1, 'labels': labels.tolist(), 'centroids': centroids.tolist(), 'plot_image': f'data:image/png;base64,{plot_image}'}
+        iterations.append(iteration)
+
+    response = {'iterations': iterations}
+    return jsonify(response)
 
 @app.route("/")
 def home_view():
